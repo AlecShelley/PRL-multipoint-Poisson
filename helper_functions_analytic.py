@@ -478,7 +478,8 @@ def color_from_partitions(partitions, colors, num_points, color_dist):
     return color_probs
 
 def color_distribution(points, colors, color_dist):
-    """Returns the color probability distribution for points[-1].
+    """Returns the color probability distribution for points[-1]. Should not be called with
+    greater than 3 dimensions or more than 5 points.
     
     points: np.array, shape (n,d). points[:-1] are the colored points, points[-1] is the point whose color is unknown
     colors: tuple of ints, shape (n-1). Colors of points[:-1].
@@ -498,6 +499,9 @@ def color_distribution(points, colors, color_dist):
     >>> print(np.allclose(got, got3d))
     True
     """
+    if len(points) > 5 or points.shape[1] > 3:
+        raise ValueError("color_distribution is not supported for more than 5 points or 3 dimensions. "
+                                "The run time is 2^(2^number of points), so it wont run for 6 points.")
     n = len(points)
     rates = slash_rates(points)
     partitions = list(rates.keys())
