@@ -417,6 +417,546 @@ def plot_mc_colors_with_errorbars(d, gridpoints, color_dist, colors,\
 
     return fig, ax, color_probs_mean, stdev
 
+### code for checking chord length convergence ###
+
+def hyperplane_colorer_1D(points, gridpoints, colorcutoffs = np.array([0.5])):
+    """Returns the colors of regions of a 1-dimensional ball partitioned by hyperplnes (points)
+    
+    points: np.array, shape (n,d), of points defining the hyperplanes
+    gridpoints: np.array, shape (N,d), the points at which to evaluate the hyperplanes
+    colorcutoffs: np.array, the cutoffs for the colors
+
+    returns: np.array, the color values for the gridpoints
+    """
+
+    points = np.sort(points, axis = 0)
+    colors = np.random.uniform(size = len(points)+1) #number of regions is number of hyperpoints + 1
+    color_indices = np.digitize(colors, colorcutoffs)
+
+    color_field = np.zeros(len(gridpoints), dtype = int)
+
+    current_point_index = 0
+    for i, gridpoint in enumerate(gridpoints):
+        if (current_point_index == len(points)) or gridpoint<points[current_point_index]:
+            color_field[i] = color_indices[current_point_index]
+        else:
+            current_point_index += 1
+            color_field[i] = color_indices[current_point_index]
+    return color_field
+
+def check_chord_length(color_field, resolution):
+    """Returns the sum of left and right chord lengths for a color_field line of colors
+    color_field: numpy array of colors along a line
+    resolution: int, the linear density of the gridpoints defining the color_field
+    returns: int, sum of left and right chord lengths (furthest we can go before color changes)
+    """
+
+    if len(color_field.shape) != 1:
+        color_field = color_field[:,0] #disregard the coordinates outside of the direction parallel to the line
+    l,r = len(color_field)//2, len(color_field)//2
+    m = len(color_field)//2
+
+    while l>=0 and color_field[l] == color_field[m]:
+        l -= 1
+    while r<len(color_field) and color_field[r] == color_field[m]:
+        r += 1
+    
+    return (r-l-1)/resolution #convert index length to physical distance by dividing by resolution
+    
+
+
+def mc_chord_length(d, r, resolution, color_dist, samples_array):
+    """Average chord length (distnce until material boundary) in Poisson media.
+    d: int, dimension of the hyperplane
+    r: int, radius of ball to generate hyperplanes in 
+    resolution: int, the linear density of gridpoints
+    color_dist: tuple, the probability distribution of colors
+    samples_array: array of number of samples to run the simulation
+    """
+
+    if d == 1:
+        hyperplane_colorer = hyperplane_colorer_1D  # pylint: disable=possibly-used-before-assignment
+    elif d == 2:
+        hyperplane_colorer = hyperplane_colorer_2D
+    elif d == 3:
+        hyperplane_colorer = hyperplane_colorer_3D
+
+    chord_lengths = np.zeros(len(samples_array))
+    chord_length_sum = 0
+    count = 0
+    for i, num_samples in enumerate(np.diff(np.insert(samples_array, 0, 0))):
+        for _ in range(num_samples):
+            n = np.random.poisson(rate(d,r))
+            points = sample_from_ball(d, n)*r
+            num_gridpoints = 2*r*resolution
+            gridpoints_x = np.linspace(-r, r, num_gridpoints) #all the tested points will lie along a line
+            gridpoints = np.zeros((num_gridpoints, d))
+            gridpoints[:,0] = gridpoints_x
+
+            colorcutoffs = np.cumsum(color_dist)[:-1]
+            color_values = hyperplane_colorer(points, gridpoints, colorcutoffs)  # pylint: disable=possibly-used-before-assignment
+            chord_length_sum += check_chord_length(color_values, resolution)/2 #divie by 2 to averge left and right chords
+            count += 1
+        chord_lengths[i] = chord_length_sum/count
+
+    return chord_lengths
+
+def plot_mc_chord_lengths_with_errorbars(r, resolution, color_dist, samples_array, num_runs):
+    """Wrapper function that runs the convergence of chord lengths multiple times and plots
+    the convergence with error bars to a common value for dimensions d=1,2, and 3.
+
+    r: int, radius of ball to generate hyperplanes in
+    resolution: int, the linear density of gridpoints
+    color_dist: tuple, the probability distribution of colors
+    samples_array: array of number of samples to run the simulation
+    num_runs: number of epochs, used to calculate the mean and standard deviation"""
+    
+    fig, ax = plt.subplots(figsize=(12, 8))
+    ax.set_xlabel('Number of Samples', fontsize = 20)
+    ax.set_ylabel('Average Chord Length', fontsize = 20)
+    ax.set_title(f'Dimension Independant Chord Lengths', fontsize = 26)
+    ax.tick_params(axis='both', which='major', labelsize=14)  # Major ticks
+    ax.tick_params(axis='both', which='minor', labelsize=12)  # Minor ticks
+
+    chord_lengths_mean_ret = np.zeros((3, len(samples_array)))
+    stdev_ret = np.zeros((3, len(samples_array)))
+
+    analytic_solution = 0
+    for color_prob in color_dist:
+        analytic_solution += color_prob/(1-color_prob)
+
+    for d in (1,2,3):
+
+        chord_lengths_sum = np.zeros(len(samples_array))
+        chord_lengths_sq_sum = np.zeros(len(samples_array))
+        for _ in range(num_runs):
+            #print(f"d={d}, {_/num_runs*100}% done")
+            chord_lengths = mc_chord_length(d, r, resolution, color_dist, samples_array)
+            chord_lengths_sum += chord_lengths
+            chord_lengths_sq_sum += chord_lengths**2
+
+        chord_lengths_mean = chord_lengths_sum / num_runs
+        variance = (chord_lengths_sq_sum / num_runs) - (chord_lengths_mean ** 2)
+        stdev = np.sqrt(variance)
+
+        ax.errorbar(samples_array, chord_lengths_mean, yerr=stdev, marker='o', markersize=2, capsize=3\
+                    , label = f"d = {d}")
+        chord_lengths_mean_ret[d-1] = chord_lengths_mean
+        stdev_ret[d-1] = stdev
+
+    ax.axhline(y=analytic_solution, linestyle='--', color='grey', label='Analytic Solution')
+    ax.legend(loc='upper left', borderaxespad=0., fontsize=20)
+
+    return fig, ax, chord_lengths_mean_ret, stdev_ret
+
+### End of chord length code ###
+
+def probability_landscape(points, colors, color_dist, region_size=1, grid_resolution=10, save = False,\
+                          noise=1e-8, all_colors = False, plot = False, explicit_region = None):
+    """
+    Plots the probability landscape of color distribution for the given points in 2D space, both as 3D and contour plot.
+    
+    Parameters:
+    points: np.array, Array of shape (n, 2) representing n points in 2D space whose colors are conditioned on.
+    colors: tuple, length n, representing the color assigned to each point.
+    color_dist: tuple, the initial probabilities of each color.
+    region_size: float, Size of the region around the points to visualize. Default is 1.
+    grid_resolution: int, The resolution of the grid in the region to plot. Default is 10.
+    noise: float, The amount of noise to add to the points to avoid coplanar points. Default is 1e-8.
+    all_colors: bool, whether to plot all colors or just the first one. Default False.
+    explicit_region: tuple, the explicit region to plot in the form (x_min, x_max, y_min, y_max). Default None.
+
+    Returns: list, containing tuples for both the 3D and contour plots for each color
+            Each tuple contains (fig, ax, z) for 3D and (fig, ax, z) for the contour plot.
+    """
+    
+    num_colors = len(color_dist)  # Number of color categories
+    
+    if not explicit_region:
+        # Determine the region to plot based on the min/max of the points
+        x_min, y_min = np.min(points, axis=0) - region_size
+        x_max, y_max = np.max(points, axis=0) + region_size
+    else:
+        x_min, x_max, y_min, y_max = explicit_region
+    dimension = points.shape[1]  # Dimension of the points
+    if dimension == 2:
+        dummy_point = np.array([x_min, y_min])  # Dummy point to represent the grid point
+    else:
+        dummy_point = np.array([x_min, y_min, 0])
+    points = np.append(points, [dummy_point], axis=0) # Add a dummy point to the end, which will be reassigned in grid
+    points = points + np.random.normal(0, noise, points.shape)  # Add noise to avoid coplanar points
+    
+    # Create a grid of points in the region
+    x = np.linspace(x_min, x_max, grid_resolution)
+    y = np.linspace(y_min, y_max, grid_resolution)
+    xx, yy = np.meshgrid(x, y)
+    grid_points = np.c_[xx.ravel(), yy.ravel()]  # Flatten the grid into (x, y) coordinates
+
+    # Array to store color probabilities for each grid point
+    color_probs_grid = np.zeros((grid_resolution, grid_resolution, num_colors))
+
+    # Loop through the grid points and calculate color distribution for each point as points[-1]
+    for i, grid_point in enumerate(grid_points):
+        # Print progress every 5%
+        #if i % (grid_resolution * grid_resolution // 20) == 0:
+            #print(f"{i / (grid_resolution * grid_resolution) * 100}% of the grid done")
+        
+        if dimension == 2:
+            points[-1] = grid_point  # Set the last point to the current grid point
+        elif dimension == 3:
+            points[-1] = np.append(grid_point, 0)
+        color_probs = color_distribution(points, colors, color_dist)  # Get color distribution
+
+        # Compute the corresponding 2D index for storing results
+        grid_x_idx = i // grid_resolution
+        grid_y_idx = i % grid_resolution
+
+        # Avoid index errors by ensuring valid indices
+        if grid_x_idx < grid_resolution and grid_y_idx < grid_resolution:
+            # Store the color probabilities at the correct grid location
+            color_probs_grid[grid_x_idx, grid_y_idx, :] = color_probs
+
+    # Plot the probability landscape for each color in both 3D and contour form
+    for color_index in range(num_colors):
+        if not all_colors and color_index > 0:
+            continue
+        
+        z = color_probs_grid[:, :, color_index]  # Extract the probabilities for the current color
+        if not plot:
+            return (((None, None, z), (None, None, z))) #None to keep function consistent output
+        
+        # Plot the 3D surface for the current color
+        fig_3d = plt.figure()
+        ax_3d = fig_3d.add_subplot(111, projection='3d')
+        surf = ax_3d.plot_surface(xx, yy, z, cmap='viridis', alpha=1, zorder=1)
+        
+        # Add labels and titles for 3D plot
+        geometry = "Poisson"
+        pointslist = list(map(list, np.round(points, 2)))
+        colorlist = list(map(int, colors))
+        ax_3d.set_title(f"{geometry} Probability Landscape (3D) for Color {color_index}\n"
+                    f"Points: {pointslist[:-1]} \n"
+                    f"Colors: {colorlist}, Color Distribution: {color_dist}", multialignment='center')
+        ax_3d.set_xlabel('X axis')
+        ax_3d.set_ylabel('Y axis')
+        ax_3d.set_zlabel(f"Probability (Color {color_index})")
+
+        # Create contour plot for the same data
+        fig_contour, ax_contour = plt.subplots()
+        levels = np.linspace(0, 1, 20)  #Contour levels
+        contour = ax_contour.contourf(xx, yy, z, levels=levels, cmap='viridis')
+        # Add contour line specifically at the raw probability value
+        ax_contour.contour(xx, yy, z, levels=[color_dist[color_index]], colors='red', linewidths=2)
+        fig_contour.colorbar(contour, ax=ax_contour)
+
+        # Add labels and titles for contour plot
+        ax_contour.set_title(f"{geometry} Probability for Color {color_index}\n"
+                                f"Points: {pointslist[:-1]} \n"
+                                f"Colors: {colorlist}, Color Distribution: {color_dist}", multialignment='center')
+        ax_contour.set_xlabel('X axis')
+        ax_contour.set_ylabel('Y axis')
+
+        if save:
+            random_index = np.random.randint(10000000)
+            fig_3d.savefig(f'{geometry}_landscape_color_{color_index}_{random_index}.pdf')
+            fig_contour.savefig(f'{geometry}_contour_color_{color_index}_{random_index}.pdf')
+
+        # Show the plots
+        plt.show()
+
+    return (((fig_3d, ax_3d, z), (fig_contour, ax_contour, z)))
+
+def figure_3_helper(color_dist = (.5,.5), grid_resolution = 30):
+    all_landscape_data = []
+
+    ### Beggining with subfigures a,b,c ###
+
+    fig, axs = plt.subplots(3, 2, figsize=(10, 18))
+    subplot_labels = ['(a)', '(b)', '(c)', '(d)', '(e)', '(f)']
+    m = 1 #effectively controls the length scale/hyperplane arrival rate for the entire plot
+
+    axs = axs.ravel()
+    x_min, y_min = -1*m,-1*m
+    x_max, y_max = 2*m,2*m
+    x = np.linspace(x_min, x_max, grid_resolution)
+    y = np.linspace(y_min, y_max, grid_resolution)
+    xx, yy = np.meshgrid(x, y)
+    explicit_region = (x_min,x_max,y_min,y_max) #xmin xmax ymin ymax
+
+    points = np.array([[0,0],[0,1*m]])
+    colors = (0,1)
+    z = probability_landscape(points, colors, color_dist, grid_resolution = grid_resolution, \
+                                explicit_region = explicit_region)[1][-1]
+    all_landscape_data.append({
+        'xx': xx.copy(),
+        'yy': yy.copy(),
+        'z': z.copy(),
+        'points': points.copy(),
+        'colors': np.array(colors)
+    })
+    ax = axs[0]
+    contour_levels = np.linspace(0, 1, 21)
+    contour = ax.contourf(xx, yy, z, levels = contour_levels, cmap='viridis')
+    #ax.set_title("CPF For Points [0,0], [0,1]", fontsize = 20)
+    ax.set_aspect('equal')
+    ax.text(-0.1, 1.1, subplot_labels[0], transform=ax.transAxes, fontsize=20, \
+            fontweight='bold', va='top', ha='right')
+    ax.tick_params(axis='both', which='major', labelsize=14)  # Major ticks
+    ax.tick_params(axis='both', which='minor', labelsize=12)  # Minor ticks
+    ax.contour(xx, yy, z, levels=[0.5], colors='blue', linewidths=2)  # Add blue contour at 50%
+    #now add red dots where the points are
+    color_map = {0: 'black', 1: 'orange'}  # Define your mapping
+    for point, c in zip(points, colors):
+        ax.scatter(*point[:2], marker="+", color=color_map[c], s=100)
+
+    points = np.array([[0,0],[0,1*m],[1*m,0]])
+    colors = (0,1,1)
+    z = probability_landscape(points, colors, color_dist, grid_resolution = grid_resolution\
+        , explicit_region = explicit_region)[1][-1]
+    all_landscape_data.append({
+        'xx': xx.copy(),
+        'yy': yy.copy(),
+        'z': z.copy(),
+        'points': points.copy(),
+        'colors': np.array(colors)
+    })
+    ax = axs[2]
+    contour = ax.contourf(xx, yy, z, levels = contour_levels, cmap='viridis')
+    #ax.set_title("[0,0], [0,1], [1,0]", fontsize = 20)
+    ax.set_aspect('equal')
+    ax.text(-0.1, 1.1, subplot_labels[1], transform=ax.transAxes, fontsize=20, \
+            fontweight='bold', va='top', ha='right')
+    ax.tick_params(axis='both', which='major', labelsize=14)  # Major ticks
+    ax.tick_params(axis='both', which='minor', labelsize=12)  # Minor ticks
+    ax.contour(xx, yy, z, levels=[0.5], colors='blue', linewidths=2)  # Add blue contour at 50%
+    color_map = {0: 'black', 1: 'orange'}  # Define your mapping
+    for point, c in zip(points, colors):
+        ax.scatter(*point[:2], marker="+", color=color_map[c], s=100)
+
+    points = np.array([[0,1*m,0],[1*m,0,0],[0,0,.5*m]])
+    colors = (1,1,0)
+    z = probability_landscape(points, colors, color_dist, grid_resolution = grid_resolution, \
+                                explicit_region = explicit_region)[1][-1]
+    all_landscape_data.append({
+        'xx': xx.copy(),
+        'yy': yy.copy(),
+        'z': z.copy(),
+        'points': points.copy(),
+        'colors': np.array(colors)
+    })
+    ax = axs[4]
+    contour = ax.contourf(xx, yy, z, levels = contour_levels, cmap='viridis')
+    #ax.set_title("[0,1,0], [1,0,0], [0,0,.5]", fontsize = 20)
+    ax.set_aspect('equal')
+    ax.text(-0.1, 1.1, subplot_labels[2], transform=ax.transAxes, fontsize=20, \
+            fontweight='bold', va='top', ha='right')
+    ax.tick_params(axis='both', which='major', labelsize=14)  # Major ticks
+    ax.tick_params(axis='both', which='minor', labelsize=12)  # Minor ticks
+    ax.contour(xx, yy, z, levels=[0.5], colors='blue', linewidths=2)  # Add blue contour at 50%
+    color_map = {0: 'black', 1: 'orange'}  # Define your mapping
+    for point, c in zip(points, colors):
+        ax.scatter(*point[:2], marker="+", color=color_map[c], s=100)
+
+    ### Now do subfigures d,e,f ###
+    m = .05 #effectively controls the length scale/hyperplane arrival rate for the entire plot
+
+    axs = axs.ravel()
+    x_min, y_min = -1*m,-1*m
+    x_max, y_max = 2*m,2*m
+    x = np.linspace(x_min, x_max, grid_resolution)
+    y = np.linspace(y_min, y_max, grid_resolution)
+    xx, yy = np.meshgrid(x, y)
+    explicit_region = (x_min,x_max,y_min,y_max) #xmin xmax ymin ymax
+
+    points = np.array([[0,0],[0,1*m]])
+    colors = (0,1)
+    z = probability_landscape(points, colors, color_dist, grid_resolution = grid_resolution, \
+                                explicit_region = explicit_region)[1][-1]
+    all_landscape_data.append({
+        'xx': xx.copy(),
+        'yy': yy.copy(),
+        'z': z.copy(),
+        'points': points.copy(),
+        'colors': np.array(colors)
+    })
+    ax = axs[1]
+    contour_levels = np.linspace(0, 1, 21)
+    contour = ax.contourf(xx, yy, z, levels = contour_levels, cmap='viridis')
+    #ax.set_title("CPF For Points [0,0], [0,1]", fontsize = 20)
+    ax.set_aspect('equal')
+    ax.text(-0.1, 1.1, subplot_labels[3], transform=ax.transAxes, fontsize=20, \
+            fontweight='bold', va='top', ha='right')
+    ax.tick_params(axis='both', which='major', labelsize=14)  # Major ticks
+    ax.tick_params(axis='both', which='minor', labelsize=12)  # Minor ticks
+    ax.contour(xx, yy, z, levels=[0.5], colors='blue', linewidths=2)  # Add blue contour at 50%
+    color_map = {0: 'black', 1: 'orange'}  # Define your mapping
+    for point, c in zip(points, colors):
+        ax.scatter(*point[:2], marker="+", color=color_map[c], s=100)
+
+
+    points = np.array([[0,0],[0,1*m],[1*m,0]])
+    colors = (0,1,1)
+    z = probability_landscape(points, colors, color_dist, grid_resolution = grid_resolution, \
+                                explicit_region = explicit_region)[1][-1]
+    all_landscape_data.append({
+        'xx': xx.copy(),
+        'yy': yy.copy(),
+        'z': z.copy(),
+        'points': points.copy(),
+        'colors': np.array(colors)
+    })
+    ax = axs[3]
+    contour = ax.contourf(xx, yy, z, levels = contour_levels, cmap='viridis')
+    #ax.set_title("[0,0], [0,1], [1,0]", fontsize = 20)
+    ax.set_aspect('equal')
+    ax.text(-0.1, 1.1, subplot_labels[4], transform=ax.transAxes, fontsize=20, \
+            fontweight='bold', va='top', ha='right')
+    ax.tick_params(axis='both', which='major', labelsize=14)  # Major ticks
+    ax.tick_params(axis='both', which='minor', labelsize=12)  # Minor ticks
+    ax.contour(xx, yy, z, levels=[0.5], colors='blue', linewidths=2)  # Add blue contour at 50%
+    color_map = {0: 'black', 1: 'orange'}  # Define your mapping
+    for point, c in zip(points, colors):
+        ax.scatter(*point[:2], marker="+", color=color_map[c], s=100)
+
+
+    points = np.array([[0,1*m,0],[1*m,0,0],[0,0,.5*m]])
+    colors = (1,1,0)
+    z = probability_landscape(points, colors, color_dist, grid_resolution = grid_resolution, \
+                                explicit_region = explicit_region)[1][-1]
+    all_landscape_data.append({
+        'xx': xx.copy(),
+        'yy': yy.copy(),
+        'z': z.copy(),
+        'points': points.copy(),
+        'colors': np.array(colors)
+    })
+    ax = axs[5]
+    contour = ax.contourf(xx, yy, z, levels = contour_levels, cmap='viridis')
+    #ax.set_title("[0,1,0], [1,0,0], [0,0,.5]", fontsize = 20)
+    ax.set_aspect('equal')
+    ax.text(-0.1, 1.1, subplot_labels[5], transform=ax.transAxes, fontsize=20, \
+            fontweight='bold', va='top', ha='right')
+    ax.tick_params(axis='both', which='major', labelsize=14)  # Major ticks
+    ax.tick_params(axis='both', which='minor', labelsize=12)  # Minor ticks
+    ax.contour(xx, yy, z, levels=[0.5], colors='blue', linewidths=2)  # Add blue contour at 50%
+    color_map = {0: 'black', 1: 'orange'}  # Define your mapping
+    for point, c in zip(points, colors):
+        ax.scatter(*point[:2], marker="+", color=color_map[c], s=100)
+
+    cbar = fig.colorbar(contour, ax=axs, orientation='horizontal', shrink=.9, pad=0.05)
+    cbar.set_ticks(np.linspace(0, 1, 11))
+    plt.show()
+
+    return
+
+
+def supplement_figure_4_helper(m = 1, color_dist = (0.3,0.7), grid_resolution = 30):
+    """
+    Plots the supplement figure 4.
+    
+    Parameters:
+    m: float, scales distance between points. Default is 1.
+    color_dist: tuple, the initial probabilities of each color. Default is (0.3,0.7).
+    grid_resolution: int, The resolution of the grid in the region to plot. Default is 30.
+    """
+    points = np.array([[-.05*m,0],[.05*m,0]])
+    colors = (0,1)
+    region_size = 1
+
+    x_min, y_min = np.min(points, axis=0) - region_size #used in the next code cell
+    x_max, y_max = np.max(points, axis=0) + region_size
+    x = np.linspace(x_min, x_max, grid_resolution)
+    y = np.linspace(y_min, y_max, grid_resolution)
+    xx, yy = np.meshgrid(x, y)
+                    
+    z = probability_landscape(points, colors, color_dist, region_size, grid_resolution)[0][-1]
+    fig, axs = plt.subplots(3, 1, figsize=(6, 18))
+    subplot_labels = ['(a)', '(b)', '(c)']
+
+    axs = axs.ravel()
+
+    # Plot for Exact 3-Point CPF
+    ax = axs[0]
+    contour_levels = np.linspace(0, 1, 21)
+    colorbar_ticks = np.linspace(0, 1, 11)
+
+
+    contour = ax.contourf(xx, yy, z, levels=contour_levels, cmap='viridis')
+    ax.contour(xx, yy, z, levels=[0.3], colors='blue', linewidths=2)  # Add blue contour at 30%
+    ax.set_title("Exact 3-Point CPF", fontsize=20)
+    ax.set_aspect('equal')
+    ax.text(-0.1, 1.15, subplot_labels[0], transform=ax.transAxes, fontsize=20, \
+            fontweight='bold', va='top', ha='right')
+    cbar = fig.colorbar(contour, orientation='vertical', ax=ax)
+    cbar.set_ticks(colorbar_ticks)
+    cbar.ax.hlines(0.3, *cbar.ax.get_xlim(), colors='blue', linewidth=2)  # Add blue line at 30%
+    cbar.ax.yaxis.label.set_size(fontsize = 20)
+    cbar.ax.tick_params(labelsize=14)
+    ax.tick_params(axis='both', which='major', labelsize=14)  # Major ticks
+    ax.tick_params(axis='both', which='minor', labelsize=12)  # Minor ticks
+
+
+    # Define the threepoint_perturb function
+    def threepoint_perturb(x, y, color_dist):
+        """0th order perturbative expansion of the 3 point function."""
+        vec = np.array([x, y])
+        r = np.linalg.norm(vec)
+        theta = np.abs(np.arctan2(y, x))  # Measuring theta from y axis
+        
+        p_left = 1 / 2 - np.cos(theta) / 2  # Should measure theta from x axis
+        p_right = 1 / 2 + np.cos(theta) / 2
+        
+        connected = np.e ** (-r)
+        disconnected = 1 - connected
+
+        right = connected * np.array([0, 1]) + disconnected * np.array(color_dist)
+        left = connected * np.array([1, 0]) + disconnected * np.array(color_dist)
+
+        return (p_right * right + p_left * left)[0]
+
+    # Compute the perturbative approximation
+    z_perturb = np.zeros_like(z)
+    for i in range(grid_resolution):
+        for j in range(grid_resolution):
+            z_perturb[i, j] = threepoint_perturb(xx[i, j], yy[i, j], color_dist)
+
+    # Plot for 0th Order Approximation
+    ax = axs[1]
+    levels = np.linspace(0, 1, 21)
+    contour = ax.contourf(xx, yy, z_perturb, levels=contour_levels, cmap='viridis')
+    ax.contour(xx, yy, z_perturb, levels=[0.3], colors='blue', linewidths=2)  # Add red contour at 50%
+    ax.set_title("0th Order Approximation", fontsize=20)
+    ax.set_aspect('equal')
+    ax.text(-0.1, 1.15, subplot_labels[1], transform=ax.transAxes, fontsize=20, \
+            fontweight='bold', va='top', ha='right')
+    cbar = fig.colorbar(contour, orientation='vertical', ax=ax)
+    cbar.set_ticks(colorbar_ticks)
+    cbar.ax.hlines(0.3, *cbar.ax.get_xlim(), colors='blue', linewidth=2)  # Add blue line at 50%
+    cbar.ax.yaxis.label.set_size(fontsize = 20)
+    cbar.ax.tick_params(labelsize=14)
+    ax.tick_params(axis='both', which='major', labelsize=14)  # Major ticks
+    ax.tick_params(axis='both', which='minor', labelsize=12)  # Minor ticks
+
+
+    # Plot for Absolute Difference
+    ax = axs[2]
+    max_shown = .05 #clipped above this on the color plot
+    levels = np.linspace(0, max_shown, 51)
+    contour = ax.contourf(xx, yy, np.abs(z - z_perturb), levels=levels, cmap='magma', extend = 'max')
+    ax.contour(xx, yy, np.abs(z - z_perturb), levels=[0], colors='black', linewidths=2)  # Add red contour at 50%
+    ax.set_title("Absolute Difference", fontsize=20)
+    ax.set_aspect('equal')
+    ax.text(-0.1, 1.15, subplot_labels[2], transform=ax.transAxes, fontsize=20, \
+            fontweight='bold', va='top', ha='right')
+    cbar = fig.colorbar(contour, orientation='vertical', ax=ax, extend = 'max')
+    cbar.ax.yaxis.label.set_size(fontsize = 20)
+    cbar.ax.tick_params(labelsize=12)
+    ax.tick_params(axis='both', which='major', labelsize=14)  # Major ticks
+    ax.tick_params(axis='both', which='minor', labelsize=12)  # Minor ticks
+
+    # Show the plots
+    plt.show()
+
 
 if __name__ == "__main__":
     import doctest
