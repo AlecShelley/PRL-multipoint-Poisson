@@ -748,6 +748,33 @@ def monte_carlo_hyperplane_partitions(d, r, gridpoints, num_samples):
     connectivity_distribution = {k: v / num_samples for k, v in connectivity_counts.items()}
     return connectivity_distribution
 
+def plot_convergence_all_partitions_mc(d, gridpoints, samples_array):
+    """Plots Monte Carlo convergence of probabilities of each connectivity graph
+    d: dimension of the hyperplane
+    gridpoints: list of points to generate the hyperplanes
+    samples_array: array of number of samples to run the simulation
+    analytic_probs: dictionary of analytic probabilities for each graph (to compare to Monte Carlo results)
+    """
+    r = max([np.linalg.norm(p) for p in gridpoints])  # Maximum distance from origin
+    all_partition_probs = defaultdict(lambda: np.zeros(len(samples_array)))  # Empty array for nonexistent keys
+    possible_partitions = generate_all_connectivity_tuples(len(gridpoints))
+
+    cumulative_counts = defaultdict(int)
+
+    for i, num_samples in enumerate(np.diff(np.insert(samples_array, 0, 0))):
+        partition_probs = monte_carlo_hyperplane_partitions(d, r, gridpoints, num_samples)
+
+        # Accumulate counts for each partition
+        for partition, probability in partition_probs.items():
+            cumulative_counts[partition] += probability * num_samples
+
+        # Calculate probabilities at this step
+        total_count = sum(cumulative_counts.values())
+        for partition in possible_partitions:
+            all_partition_probs[partition][i] = cumulative_counts[partition] / total_count
+
+    return all_partition_probs
+
 def monte_carlo_convergence_with_error_bars(d, gridpoints, samples_array, num_runs, analytic_probs=None):
     """Wrapper function that runs the convergence multiple times and plots the average with error bars."""
     # Initialize dictionaries to store sums and squared sums for averaging and std deviation
