@@ -385,7 +385,7 @@ def slash_rates(points):
 
 
     rates = defaultdict(int)
-    whole_hitrate = hitrate(points)
+    whole_hitrate = hitrate(points) # pylint: disable=used-before-assignment
 
     for i in range(n): #single point partitions base case
         rest_hitrate = hitrate(np.delete(points, i, axis=0))
@@ -402,13 +402,13 @@ def slash_rates(points):
         rest_points = np.delete(points, list(subset), axis=0)
         rest_hitrate = hitrate(rest_points)
         
-        rate = whole_hitrate - rest_hitrate #next we need to subtract the subset rates
+        my_rate = whole_hitrate - rest_hitrate #next we need to subtract the subset rates
         for sub_size in range(1,m):
             for sub_subset in combinations(subset, sub_size):
-                rate -= rates[sub_subset] #subtracting off rate of smaller subsets
+                my_rate -= rates[sub_subset] #subtracting off rate of smaller subsets
         
-        rates[subset] = rate #can modify mutable dictionary in function scope
-        return rate
+        rates[subset] = my_rate #can modify mutable dictionary in function scope
+        return my_rate
     
     #calculate the rates of all other partitions up to the middle one which is an edge case
     for size in range(2,n//2):
