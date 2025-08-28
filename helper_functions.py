@@ -709,6 +709,120 @@ def color_sample(points, colors, color_dist):
     ret /= np.sum(ret)  # re-normalize after clipping
     return ret
 
+### The following hepler functions are for the Monte Carlo plots
+
+def monte_carlo_hyperplane_partitions(d, r, gridpoints, num_samples):
+    """Returns Monte-Carlo distribution of connectivity tuples of hyperplane partitions of gridpoints.
+    d: int, the dimension of the space
+    r: float, the radius of the ball
+    gridpoints: np.array, shape (n,d), the points to partition
+    num_samples: int, the number of samples to take
+    """
+
+    connectivity_counts = defaultdict(int)  # Store the counts of each connectivity
+    num_points = len(gridpoints)
+    
+    for _ in range(num_samples):
+        # Sample hyperplanes
+        n_hyperplanes = np.random.poisson(rate(d, r))
+        hyperplanes = sample_from_ball(d, n_hyperplanes) * r
+        
+        # Determine regions using the safe partition function
+        region_hashes = hyperplane_partition(hyperplanes, gridpoints)
+        
+        # Convert region hashes to tuples for hashability
+        region_hashes_tuples = [tuple(row) for row in region_hashes]
+        
+        # Create connectivity tuple with sorted components
+        connectivity_components = defaultdict(list)
+        for i, region_hash in enumerate(region_hashes_tuples):
+            connectivity_components[region_hash].append(i)
+        
+        # Convert to connectivity tuple (sorted by components)
+        connectivity_tuple = tuple(tuple(sorted(component)) for component in connectivity_components.values())
+        
+        # Increment the count of this connectivity tuple
+        connectivity_counts[connectivity_tuple] += 1
+    
+    # Convert counts to probabilities
+    connectivity_distribution = {k: v / num_samples for k, v in connectivity_counts.items()}
+    return connectivity_distribution
+
+def monte_carlo_convergence_with_error_bars(d, gridpoints, samples_array, num_runs, analytic_probs=None):
+    """Wrapper function that runs the convergence multiple times and plots the average with error bars."""
+    # Initialize dictionaries to store sums and squared sums for averaging and std deviation
+    all_partition_probs_sum = defaultdict(lambda: np.zeros(len(samples_array)))
+    all_partition_probs_sq_sum = defaultdict(lambda: np.zeros(len(samples_array)))
+    possible_partitions = generate_all_connectivity_tuples(len(gridpoints))
+
+    # Run the Monte Carlo convergence multiple times
+    for run in range(num_runs):
+        all_partition_probs = plot_convergence_all_partitions_mc(d, gridpoints, samples_array)
+
+        # Accumulate sum and squared sum for each partition
+        for partition in possible_partitions:
+            all_partition_probs_sum[partition] += all_partition_probs[partition]
+            all_partition_probs_sq_sum[partition] += all_partition_probs[partition] ** 2
+
+    # Calculate the mean and standard deviation for each partition
+    all_partition_probs_mean = defaultdict(lambda: np.zeros(len(samples_array)))
+    all_partition_probs_std = defaultdict(lambda: np.zeros(len(samples_array)))
+
+    for partition in possible_partitions:
+        mean = all_partition_probs_sum[partition] / num_runs
+        variance = (all_partition_probs_sq_sum[partition] / num_runs) - (mean ** 2)
+        stddev = np.sqrt(variance)
+
+        all_partition_probs_mean[partition] = mean
+        all_partition_probs_std[partition] = stddev
+
+    # Plot the mean with error bars
+    fig, ax = plt.subplots(figsize=(12, 8))
+    for partition, mean_probs in all_partition_probs_mean.items():
+        std_probs = all_partition_probs_std[partition]
+        ax.errorbar(samples_array, mean_probs, yerr=std_probs, marker='o', label=f"H = {partition}", markersize=2, capsize=3)
+
+    # Plot analytic probabilities as horizontal lines
+    if analytic_probs:
+        label_added = False
+        for partition, analytic_prob in analytic_probs.items():
+            if not label_added:
+                ax.axhline(y=analytic_prob, linestyle='--', color='grey', label='Analytic Solution')
+                label_added = True  # Set the flag to True after adding the label
+            else:
+                ax.axhline(y=analytic_prob, linestyle='--', color='grey')
+
+    ax.set_xlabel('Number of Samples', fontsize=20)
+    ax.set_ylabel('Probability of Graph H', fontsize=20)
+    ax.set_title(f'Connectivity Graphs of Points {list(map(list, gridpoints))}', fontsize=26)
+    ax.legend(loc='upper left', borderaxespad=0., fontsize=20)
+    ax.tick_params(axis='both', which='major', labelsize=14)  # Major ticks
+    ax.tick_params(axis='both', which='minor', labelsize=12)  # Minor ticks
+    ax.set_xscale('log')
+
+    # Add inset for log error
+    if analytic_probs:
+        inset_ax = fig.add_axes([0.51, 0.55, 0.25, 0.25], facecolor='white')
+        inset_ax.patch.set_alpha(.8)  # Adjust transparency of the inset background
+        for partition, mean_probs in all_partition_probs_mean.items():
+            if partition in analytic_probs:
+                analytic_prob = analytic_probs[partition]
+                log_error = np.log10(np.abs(mean_probs - analytic_prob))
+                inset_ax.plot(samples_array, log_error, label=f"H = {partition}")
+        
+        inset_ax.set_xscale('log')
+        inset_ax.set_title(r'$\log_{10}$ Error', fontsize=20)
+        inset_ax.tick_params(axis='both', which='major', labelsize=14)
+        for spine in inset_ax.spines.values():
+            spine.set_edgecolor('black')  # Ensure spine color stands out
+            spine.set_linewidth(1.2)     # Make spines slightly thicker
+            spine.set_zorder(5)          # Draw spines above background
+        inset_ax.text(0.5, 0.05, 'Samples', fontsize=20, transform=inset_ax.transAxes,
+                                ha='center', va='bottom', color='black', bbox=dict(facecolor='white', \
+                                                                                alpha=0.8, edgecolor='none'))
+
+    return fig, ax, all_partition_probs_mean, all_partition_probs_std
+
 if __name__ == "__main__":
     import doctest
     doctest.testmod()
