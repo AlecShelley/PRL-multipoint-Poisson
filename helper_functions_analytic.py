@@ -385,7 +385,7 @@ def slash_rates(points):
 
 
     rates = defaultdict(int)
-    whole_hitrate = hitrate(points) # pylint: disable=used-before-assignment
+    whole_hitrate = hitrate(points)  # pylint: disable=possibly-used-before-assignment
 
     for i in range(n): #single point partitions base case
         rest_hitrate = hitrate(np.delete(points, i, axis=0))

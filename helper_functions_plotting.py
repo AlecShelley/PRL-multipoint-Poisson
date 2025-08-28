@@ -12,7 +12,8 @@ import math
 import hashlib
 
 import scipy.special as sp
-from scipy.spatial import ConvexHull, QhullError
+from scipy.spatial.qhull import ConvexHull
+from scipy.spatial.qhull import QhullError
 from sklearn.decomposition import PCA
 
 from helper_functions_analytic import * 
@@ -340,7 +341,7 @@ def colors_mc(d, gridpoints, color_dist, colors, samples_array):
             n = np.random.poisson(rate(d,r)) #number of hyperplanes
             points = sample_from_ball(d, n)*r #sample points defining hyperplanes
 
-            color_values = hyperplane_colorer(points, gridpoints, colorcutoffs)
+            color_values = hyperplane_colorer(points, gridpoints, colorcutoffs)  # pylint: disable=possibly-used-before-assignment
             if np.all(color_values[:-1] == colors):
                 conditional_count += 1
                 color_counts[color_values[-1]] += 1 #one new recorded instance of the color of gridpoints[-1]
