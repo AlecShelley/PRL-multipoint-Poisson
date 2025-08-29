@@ -18,6 +18,8 @@ from sklearn.decomposition import PCA
 
 from helper_functions_analytic import * 
 
+### The following functions can create and plot realizations of the Poisson model. ###
+
 def sample_from_ball(d, n):
     """ Sample n points from interior of unit d-ball by uniformly sampling angle and then offset
 
@@ -144,6 +146,9 @@ def plot_hyperplanes_color_2D(r, N=100, colorcutoffs=np.array([0.5]), cmap_list 
     plt.show()
 
     return fig
+
+
+### Beyond this point, the functions are for Monte Carlo simulations and wrappers for plotting the figures from the paper. ###
 
 def monte_carlo_hyperplane_partitions(d, r, gridpoints, num_samples):
     """Returns Monte-Carlo distribution of connectivity tuples of hyperplane partitions of gridpoints.
@@ -552,7 +557,7 @@ def plot_mc_chord_lengths_with_errorbars(r, resolution, color_dist, samples_arra
 ### End of chord length code ###
 
 def probability_landscape(points, colors, color_dist, region_size=1, grid_resolution=10, save = False,\
-                          noise=1e-8, all_colors = False, plot = False, explicit_region = None):
+                           all_colors = False, plot = False, explicit_region = None):
     """
     Plots the probability landscape of color distribution for the given points in 2D space, both as 3D and contour plot.
     
@@ -562,7 +567,6 @@ def probability_landscape(points, colors, color_dist, region_size=1, grid_resolu
     color_dist: tuple, the initial probabilities of each color.
     region_size: float, Size of the region around the points to visualize. Default is 1.
     grid_resolution: int, The resolution of the grid in the region to plot. Default is 10.
-    noise: float, The amount of noise to add to the points to avoid coplanar points. Default is 1e-8.
     all_colors: bool, whether to plot all colors or just the first one. Default False.
     explicit_region: tuple, the explicit region to plot in the form (x_min, x_max, y_min, y_max). Default None.
 
@@ -583,8 +587,8 @@ def probability_landscape(points, colors, color_dist, region_size=1, grid_resolu
         dummy_point = np.array([x_min, y_min])  # Dummy point to represent the grid point
     else:
         dummy_point = np.array([x_min, y_min, 0])
-    points = np.append(points, [dummy_point], axis=0) # Add a dummy point to the end, which will be reassigned in grid
-    points = points + np.random.normal(0, noise, points.shape)  # Add noise to avoid coplanar points
+    # Add a placeholder for the unknown last point (do not mutate this base array in-place during the loop)
+    points = np.vstack([points, dummy_point])
     
     # Create a grid of points in the region
     x = np.linspace(x_min, x_max, grid_resolution)
@@ -601,11 +605,14 @@ def probability_landscape(points, colors, color_dist, region_size=1, grid_resolu
         #if i % (grid_resolution * grid_resolution // 20) == 0:
             #print(f"{i / (grid_resolution * grid_resolution) * 100}% of the grid done")
         
+        # Build a fresh array including the current grid point as the unknown last point
         if dimension == 2:
-            points[-1] = grid_point  # Set the last point to the current grid point
+            pts = np.vstack([points[:-1], grid_point])
         elif dimension == 3:
-            points[-1] = np.append(grid_point, 0)
-        color_probs = color_distribution(points, colors, color_dist)  # Get color distribution
+            pts = np.vstack([points[:-1], np.append(grid_point, 0)])
+        else:
+            raise ValueError("Only 2D and 3D are supported")
+        color_probs = color_distribution(pts, colors, color_dist)  # Get color distribution
 
         # Compute the corresponding 2D index for storing results
         grid_x_idx = i // grid_resolution
@@ -720,7 +727,7 @@ def figure_3_helper(color_dist = (.5,.5), grid_resolution = 30):
         'points': points.copy(),
         'colors': np.array(colors)
     })
-    ax = axs[2]
+    ax = axs[1]
     contour = ax.contourf(xx, yy, z, levels = contour_levels, cmap='viridis')
     #ax.set_title("[0,0], [0,1], [1,0]", fontsize = 20)
     ax.set_aspect('equal')
@@ -744,7 +751,7 @@ def figure_3_helper(color_dist = (.5,.5), grid_resolution = 30):
         'points': points.copy(),
         'colors': np.array(colors)
     })
-    ax = axs[4]
+    ax = axs[2]
     contour = ax.contourf(xx, yy, z, levels = contour_levels, cmap='viridis')
     #ax.set_title("[0,1,0], [1,0,0], [0,0,.5]", fontsize = 20)
     ax.set_aspect('equal')
@@ -779,7 +786,7 @@ def figure_3_helper(color_dist = (.5,.5), grid_resolution = 30):
         'points': points.copy(),
         'colors': np.array(colors)
     })
-    ax = axs[1]
+    ax = axs[3]
     contour_levels = np.linspace(0, 1, 21)
     contour = ax.contourf(xx, yy, z, levels = contour_levels, cmap='viridis')
     #ax.set_title("CPF For Points [0,0], [0,1]", fontsize = 20)
@@ -805,7 +812,7 @@ def figure_3_helper(color_dist = (.5,.5), grid_resolution = 30):
         'points': points.copy(),
         'colors': np.array(colors)
     })
-    ax = axs[3]
+    ax = axs[4]
     contour = ax.contourf(xx, yy, z, levels = contour_levels, cmap='viridis')
     #ax.set_title("[0,0], [0,1], [1,0]", fontsize = 20)
     ax.set_aspect('equal')

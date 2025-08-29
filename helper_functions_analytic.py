@@ -637,8 +637,9 @@ def color_distribution(points, colors, color_dist):
     True
     """
     if len(points) > 5 or points.shape[1] > 3:
-        raise ValueError("color_distribution is not supported for more than 5 points or 3 dimensions."
-                        "The run time is 2^(2^number of points), so it wont run for 6 points.")
+        raise ValueError("color_distribution is not supported for "
+        "more than 5 points or 3 dimensions. The run time is 2^(2^number of points), "
+        "so it wont run for 6 points.")
     num_points = len(points)
     rates = slash_rates(points)
     partitions = list(rates.keys())
