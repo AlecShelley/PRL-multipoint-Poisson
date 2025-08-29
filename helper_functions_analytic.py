@@ -1,25 +1,43 @@
-import numpy as np
+"""
+Analytic utilities for Poisson hyperplane model.
 
-
+This module provides functions for calculating conditional probability functions
+for color in the Poisson hyperplane model.
+It includes utilities for:
+- Calculating the dimension-dependent rate which defines the Poisson model
+- Connectivity tuple generation and filtering
+- Hit rate calculations for convex hulls
+- Graph cutting and connectivity analysis
+- Calculating conditional probability functions for color in the Poisson hyperplane model
+"""
+import itertools
+import math
 from collections import defaultdict
 from functools import lru_cache
-import itertools
-from itertools import combinations
-import math
 
+import numpy as np
 import scipy.special as sp
 from scipy.spatial import ConvexHull, QhullError # pylint: disable=no-name-in-module
 from sklearn.decomposition import PCA
 
 
-def rate(d, r):
-    """Calculates the arrival rate of a rigid-motion invariant Poisson hyperplane process in d dimensions
-    such that the arrival rate of hyperplanes hitting a line segment is independant of dimension.
+def rate(dimension, radius):
+    """Calculate the arrival rate of a rigid-motion invariant Poisson hyperplane process.
     
-    d: int, the dimension of the space
-    r: float, the radius of the enveloping ball of the Poisson hyperplane process
-       
-    returns: float, the rate of the Poisson hyperplane process
+    Parameters
+    ----------
+    dimension : int
+        The dimension of the space
+    radius : float
+        The radius of the enveloping ball of the Poisson hyperplane process
+        
+    Returns
+    -------
+    float
+        The rate of the Poisson hyperplane process
+        
+    Examples
+    --------
     >>> rate(1, 1)
     2
     >>> rate(2, 1)  # doctest: +ELLIPSIS
@@ -27,28 +45,33 @@ def rate(d, r):
     >>> rate(3, 1)  # doctest: +ELLIPSIS
     4.0...
     """
-    
-    if d == 1: #the formula won't work for d=1
-        return 2*r
-    else: #rate is 2r/lambda_d from the paper
-        return 2*np.sqrt(np.pi) * sp.gamma(d/2 + 1/2) / sp.gamma(d/2) * r
-    
-
+    if dimension == 1:  # the formula won't work for d=1
+        return 2 * radius
+    # rate is 2r/lambda_d from the paper
+    return 2 * np.sqrt(np.pi) * sp.gamma(dimension/2 + 1/2) / sp.gamma(dimension/2) * radius
 
 
 ### The rest of the code is for calculating the multipoint functions ###
 @lru_cache(maxsize=None)
-def generate_all_connectivity_tuples(n):
-    """Generates all possible connectivity tuples for n points, sorted by lexicographical order.
-
-    n: int, the number of elements (points)
-
-    returns: list, the list of all connectivity tuples for the set of n points, sorted lexicographically
-
+def generate_all_connectivity_tuples(num_points):
+    """Generate all possible connectivity tuples for n points.
+    
+    Parameters
+    ----------
+    num_points : int
+        The number of elements (points)
+        
+    Returns
+    -------
+    list
+        The list of all connectivity tuples for the set of n points, 
+        sorted lexicographically
+        
+    Examples
+    --------
     >>> generate_all_connectivity_tuples(3)
     [((0,), (1,), (2,)), ((0,), (1, 2)), ((0, 1), (2,)), ((0, 1, 2),), ((0, 2), (1,))]
     """
-
     def partitions(set_):
         """Generate all partitions of a set, ensuring sorted partitions"""
         if len(set_) == 1:
@@ -56,31 +79,45 @@ def generate_all_connectivity_tuples(n):
             return
         first = set_[0]
         for smaller in partitions(set_[1:]):
-            for n, subset in enumerate(smaller):
-                yield smaller[:n] + [(first,) + subset] + smaller[n+1:]
+            for idx, subset in enumerate(smaller):
+                yield smaller[:idx] + [(first,) + subset] + smaller[idx+1:]
             yield [(first,)] + smaller
 
-    elements = tuple(range(n))
-    
+    elements = tuple(range(num_points))
+
     # Generate all connectivity tuples
     all_connectivity_tuples = [
-        tuple(sorted(partition, key=lambda x: (x[0], x))) for partition in partitions(elements)
+        tuple(sorted(partition, key=lambda x: (x[0], x)))
+        for partition in partitions(elements)
     ]
-    
+
     # Sort the outer list of tuples
     all_connectivity_tuples.sort(key=lambda partition: (sorted(partition), partition))
-    
+
     return all_connectivity_tuples
 
-def allowed_tuples_colors(tuples,colors, last_color_unknown = False):
-    """Returns the allowed connectivity tuples for points with the given colors. Different colors can't be connected.
 
-    tuples: list of tuples, the list of connectivity tuples to filter
-    colors: np.array, the colors of the points
-    last_color_unknown: bool, whether the last color is unknown and should be ignored (default False)
-
-    returns: list, the list of allowed connectivity tuples
-
+def allowed_tuples_colors(tuples, colors, last_color_unknown=False):
+    """Return the allowed connectivity tuples for points with the given colors.
+    
+    Different colors can't be connected.
+    
+    Parameters
+    ----------
+    tuples : list of tuples
+        The list of connectivity tuples to filter
+    colors : np.array
+        The colors of the points
+    last_color_unknown : bool, optional
+        Whether the last color is unknown and should be ignored (default False)
+        
+    Returns
+    -------
+    list
+        The list of allowed connectivity tuples
+        
+    Examples
+    --------
     >>> all_tuples = generate_all_connectivity_tuples(3)
     >>> colors1 = np.array([1, 1, 2])
     >>> result1 = allowed_tuples_colors(all_tuples, colors1)
@@ -107,14 +144,15 @@ def allowed_tuples_colors(tuples,colors, last_color_unknown = False):
     [((0,), (1,), (2,)), ((0,), (1, 2)), ((0, 2), (1,))]
     """
     if last_color_unknown:  # don't filter based on the last point's color
-        final_point = len(colors) #not -1 since colors is for all the points which actually do have a color assigned
+        final_point = len(colors)  # not -1 since colors is for all the points which
+                                   # actually do have a color assigned
         allowed_tuples = [
             tup for tup in tuples
-            if all(len(set(colors[i] for i in component if i != final_point)) == 1 
-                for component in tup if len(component) > 1 or final_point not in component)
+            if all(len(set(colors[i] for i in component if i != final_point)) == 1
+                   for component in tup if len(component) > 1 or final_point not in component)
         ]
         return allowed_tuples
-    
+
     # Filter and collect valid tuples using a list comprehension
     allowed_tuples = [
         tup for tup in tuples
@@ -124,63 +162,89 @@ def allowed_tuples_colors(tuples,colors, last_color_unknown = False):
     return allowed_tuples
 
 
-@lru_cache(maxsize = None) #cache the results of this function to avoid recalculating. must converet argument to hashable type
+@lru_cache(maxsize=None)  # cache the results of this function to avoid recalculating.
+                          # must convert argument to hashable type
 def graph_cutter(num_points, cuts):
-    """Returns the connectivity tuple for a series of graph cuts.
+    """Return the connectivity tuple for a series of graph cuts.
     
-    num_points: int, the number of points
-    cuts: tuple of tuples, each tuple contains indices of points which are cut from every point OUTSIDE the tuple
-
-    returns: tuple of tuples, the connectivity tuple
-
+    Parameters
+    ----------
+    num_points : int
+        The number of points
+    cuts : tuple of tuples
+        Each tuple contains indices of points which are cut from 
+        every point OUTSIDE the tuple
+        
+    Returns
+    -------
+    tuple of tuples
+        The connectivity tuple
+        
+    Examples
+    --------
     >>> graph_cutter(5, ((0, 1), (2, 3)))
     ((0, 1), (2, 3), (4,))
 
     >>> graph_cutter(5, ((0, 1), (1, 2)))
     ((0,), (1,), (2,), (3, 4))
     """
-    
     vertices = list(range(num_points))
     remaining = set(vertices)  # Use a set to track remaining vertices
     connectivity_tuple = []
 
-    for v in vertices:
-        if v not in remaining:  # Skip if already processed
+    for vertex in vertices:
+        if vertex not in remaining:  # Skip if already processed
             continue
-        cc = [v]
-        remaining.remove(v)  # Mark v as processed
+        connected_component = [vertex]
+        remaining.remove(vertex)  # Mark vertex as processed
 
-        for w in list(remaining):  # Iterate over remaining vertices
-            if all((v in cut) == (w in cut) for cut in cuts):  # Check if v and w belong to same side of all cuts
-                cc.append(w)
-                remaining.remove(w)  # Mark w as processed
+        for other_vertex in list(remaining):  # Iterate over remaining vertices
+            if all((vertex in cut) == (other_vertex in cut) for cut in cuts):
+                # Check if vertex and other_vertex belong to same side of all cuts
+                connected_component.append(other_vertex)
+                remaining.remove(other_vertex)  # Mark other_vertex as processed
 
-        connectivity_tuple.append(cc)  # Keep as list for now
+        connectivity_tuple.append(connected_component)  # Keep as list for now
 
     return tuple(map(tuple, connectivity_tuple))  # Convert only once at the end
 
 
 def hitrate_1d(points):
-    """Calculates the Poisson rate of hyperplanes hitting the convex hull of points in 1D.
-
-    points: np.array, shape (n,), the points to hit
-
-    returns: float, the rate of hyperplanes hitting the convex hull
-
+    """Calculate the Poisson rate of hyperplanes hitting the convex hull of points in 1D.
+    
+    Parameters
+    ----------
+    points : np.array, shape (n,)
+        The points to hit
+        
+    Returns
+    -------
+    float
+        The rate of hyperplanes hitting the convex hull
+        
+    Examples
+    --------
     >>> hitrate_1d(np.array([-2, -1, 0, 1, 2]))
     4
     """
-
     return max(points)-min(points) #hitrate is the length of segment
 
 
 def hitrate_2d(points):
-    """Calculates the Poisson rate of hyperplanes hitting the convex hull of points in 2D.
-
-    points: np.array, shape (n,2), the points to hit
-
-    returns: float, the rate of hyperplanes hitting the convex hull
-
+    """Calculate the Poisson rate of hyperplanes hitting the convex hull of points in 2D.
+    
+    Parameters
+    ----------
+    points : np.array, shape (n,2)
+        The points to hit
+        
+    Returns
+    -------
+    float
+        The rate of hyperplanes hitting the convex hull
+        
+    Examples
+    --------
     >>> import numpy as np
     >>> hitrate_2d(np.array([[0, 0], [1, 0], [0, 1], [1, 1]]))
     2.0
@@ -194,7 +258,7 @@ def hitrate_2d(points):
     if len(points) == 2:
         return np.linalg.norm(points[1] - points[0])
     elif len(points) == 3:
-        return np.sum([np.linalg.norm(points[i] - points[(i+1)%3]) for i in range(3)]) / 2
+        return np.sum([np.linalg.norm(points[i] - points[(i+1) % 3]) for i in range(3)]) / 2
     try:
         hull = ConvexHull(points)
         perimeter = hull.area
@@ -210,43 +274,70 @@ def hitrate_2d(points):
 
 
 def dihedral_angle(norm1, norm2):
-    """Calculates the dihedral angle between two normal vectors.
-
-    Parameters:
-    norm1 (np.array): Normal vector of the first face.
-    norm2 (np.array): Normal vector of the second face.
-
-    Returns:
-    float: The dihedral angle in radians.
-
+    """Calculate the dihedral angle between two normal vectors.
+    
+    Parameters
+    ----------
+    norm1 : np.array
+        Normal vector of the first face
+    norm2 : np.array
+        Normal vector of the second face
+        
+    Returns
+    -------
+    float
+        The dihedral angle in radians
+        
+    Examples
+    --------
     >>> dihedral_angle(np.array([0, -1, 0]), np.array([1, 1, 1]))
     2.1862760354652844
     """
-
     cos_theta = np.dot(norm1, norm2) / (np.linalg.norm(norm1) * np.linalg.norm(norm2))
     # Ensure the cosine is within valid range due to potential numerical errors
     cos_theta = np.clip(cos_theta, -1.0, 1.0)
     angle = np.arccos(cos_theta)
     return angle
 
+
 def ensure_outward_facing(norm, point_on_face, centroid):
-    """Ensure that the normal vector is outward-facing."""
+    """Ensure that the normal vector is outward-facing.
+    
+    Parameters
+    ----------
+    norm : np.array
+        The normal vector to check
+    point_on_face : np.array
+        A point on the face
+    centroid : np.array
+        The centroid of the shape
+        
+    Returns
+    -------
+    np.array
+        The outward-facing normal vector
+    """
     to_centroid = centroid - point_on_face
     if np.dot(norm, to_centroid) > 0:
         return -norm  # Flip the normal to point outward
     return norm
 
+
 def hitrate_3d(points):
-    """
-    Calculates the Poisson rate of hyperplanes hitting the convex hull of points in 3D.
-
-    Parameters:
-    points (np.array): 3D array of points to hit, shape (n, 3).
-
-    Returns:
-    float: The rate of hyperplanes hitting the convex hull.
-
-    Examples:
+    """Calculate the Poisson rate of hyperplanes hitting the convex hull of points in 3D.
+    
+    Parameters
+    ----------
+    points : np.array, shape (n, 3)
+        3D array of points to hit
+        
+    Returns
+    -------
+    float
+        The rate of hyperplanes hitting the convex hull
+        
+    Examples
+    --------
     >>> hitrate_3d(np.array([[0, 0, 0], [1, 0, 0], [0, 1, 0], [0, 0, 1], [0.1, 0.1, 0.1]]))
     2.2262549897645005
 
@@ -261,11 +352,10 @@ def hitrate_3d(points):
     >>> three_d_degenerate == two_d
     True
     """
-
     if len(points) == 2:
         return np.linalg.norm(points[1] - points[0])
     elif len(points) == 3:
-        return np.sum([np.linalg.norm(points[i] - points[(i+1)%3]) for i in range(3)]) / 2
+        return np.sum([np.linalg.norm(points[i] - points[(i+1) % 3]) for i in range(3)]) / 2
     try:
         hull = ConvexHull(points)
     except QhullError:
@@ -284,7 +374,8 @@ def hitrate_3d(points):
             for j in range(i + 1, 3):
                 edge = tuple(sorted((simplex[i], simplex[j])))
                 if edge not in [e[0] for e in edge_contributions]:
-                    adjacent_faces = [face for face in hull.simplices if edge[0] in face and edge[1] in face]
+                    adjacent_faces = [face for face in hull.simplices
+                                    if edge[0] in face and edge[1] in face]
                     if len(adjacent_faces) < 2:
                         continue  # skip boundary edges
                     face1_edge1 = points[adjacent_faces[0][1]] - points[adjacent_faces[0][0]]
@@ -292,8 +383,12 @@ def hitrate_3d(points):
                     face2_edge1 = points[adjacent_faces[1][1]] - points[adjacent_faces[1][0]]
                     face2_edge2 = points[adjacent_faces[1][2]] - points[adjacent_faces[1][0]]
 
-                    norm1 = ensure_outward_facing(np.cross(face1_edge1, face1_edge2), points[adjacent_faces[0][0]], centroid)
-                    norm2 = ensure_outward_facing(np.cross(face2_edge1, face2_edge2), points[adjacent_faces[1][0]], centroid)
+                    norm1 = ensure_outward_facing(
+                        np.cross(face1_edge1, face1_edge2),
+                        points[adjacent_faces[0][0]], centroid)
+                    norm2 = ensure_outward_facing(
+                        np.cross(face2_edge1, face2_edge2),
+                        points[adjacent_faces[1][0]], centroid)
 
                     edge_length = np.linalg.norm(points[edge[1]] - points[edge[0]])
                     angle = dihedral_angle(norm1, norm2)
@@ -301,18 +396,26 @@ def hitrate_3d(points):
 
     return sum(contribution for edge, contribution in edge_contributions) / (2 * np.pi)
 
+
 def slash_rates_1d(points):
-    """Returns the rates of each single hyperplane partition of the points in 1D.
-
-    points: sorted np.array, shape (n,), the points to partition
-
-    returns: dict, the rates of each partition
-
+    """Return the rates of each single hyperplane partition of the points in 1D.
+    
+    Parameters
+    ----------
+    points : np.array, shape (n,)
+        Sorted array of points to partition
+        
+    Returns
+    -------
+    dict
+        The rates of each partition
+        
+    Examples
+    --------
     >>> points = np.array([0, 1, 2, 5])
     >>> slash_rates_1d(points)
     {(0,): 1, (0, 1): 1, (0, 1, 2): 3}
     """
-
     if not np.array_equal(points, np.sort(points)):
         raise ValueError("Points must be sorted")
 
@@ -321,16 +424,25 @@ def slash_rates_1d(points):
     for i in range(len(points)-1):
         connected_component = (tuple(range(0,i+1),))
         rates[connected_component] = points[i+1] - points[i]
-    
+
     return rates
 
+
 def slash_rates(points):
-    """Returns the rates of each single hyperplane partition of the points.
-
-    points: np.array, shape (n,d), the points to partition
-
-    returns: dict, the rates of each partition
-
+    """Return the rates of each single hyperplane partition of the points.
+    
+    Parameters
+    ----------
+    points : np.array, shape (n,d)
+        The points to partition
+        
+    Returns
+    -------
+    dict
+        The rates of each partition
+        
+    Examples
+    --------
     >>> points2d = np.array([[0, 0], [1, 0], [0, 1], [1, 1]])
     >>> result = slash_rates(points2d)
     >>> result_rounded = {k: round(v, 6) for k, v in result.items()}
@@ -362,88 +474,99 @@ def slash_rates(points):
     >>> print(all([np.allclose(result2d[k],result3d[k]) for k in result2d]))
     True
     """
-
-    dimension = points.shape[1] #this block makes the function general for any dimension
+    dimension = points.shape[1]  # this block makes the function general for any dimension
     if dimension == 1:
         return slash_rates_1d(points)
     elif dimension == 2:
-        hitrate = hitrate_2d
+        hitrate_func = hitrate_2d
     elif dimension == 3:
-        hitrate = hitrate_3d
+        hitrate_func = hitrate_3d
+    else:
+        raise ValueError(f"Unsupported dimension: {dimension}")
 
-    n = len(points)
+    num_points = len(points)
 
-    #loop over all possible partitions of the points into two disjoint sets
-    #start with just one point in the first set and the rest in the second set
+    # loop over all possible partitions of the points into two disjoint sets
+    # start with just one point in the first set and the rest in the second set
 
-    if n == 2:
-        projection = (points[1]-points[0])/np.linalg.norm(points[1] - points[0])
+    if num_points == 2:
+        projection = (points[1] - points[0]) / np.linalg.norm(points[1] - points[0])
         sorted_points = np.dot(points, projection)
         return slash_rates_1d(sorted_points)
 
-
     rates = defaultdict(int)
-    whole_hitrate = hitrate(points)  # pylint: disable=possibly-used-before-assignment
+    whole_hitrate = hitrate_func(points)
 
-    for i in range(n): #single point partitions base case
-        rest_hitrate = hitrate(np.delete(points, i, axis=0))
+    for i in range(num_points):  # single point partitions base case
+        rest_hitrate = hitrate_func(np.delete(points, i, axis=0))
         rates[(i,)] = whole_hitrate - rest_hitrate
 
-    if n == 3:
+    if num_points == 3:
         return rates
-    
+
     def subset_rates(subset):
-        m = len(subset)
-        if m == 1:
-            return rates[subset] #already calculated in base case
-        
+        subset_size = len(subset)
+        if subset_size == 1:
+            return rates[subset]  # already calculated in base case
+
         rest_points = np.delete(points, list(subset), axis=0)
-        rest_hitrate = hitrate(rest_points)
-        
-        my_rate = whole_hitrate - rest_hitrate #next we need to subtract the subset rates
-        for sub_size in range(1,m):
-            for sub_subset in combinations(subset, sub_size):
-                my_rate -= rates[sub_subset] #subtracting off rate of smaller subsets
-        
-        rates[subset] = my_rate #can modify mutable dictionary in function scope
+        rest_hitrate = hitrate_func(rest_points)
+
+        my_rate = whole_hitrate - rest_hitrate  # next we need to subtract the subset rates
+        for sub_size in range(1, subset_size):
+            for sub_subset in itertools.combinations(subset, sub_size):
+                my_rate -= rates[sub_subset]  # subtracting off rate of smaller subsets
+
+        rates[subset] = my_rate  # can modify mutable dictionary in function scope
         return my_rate
-    
-    #calculate the rates of all other partitions up to the middle one which is an edge case
-    for size in range(2,n//2):
-        for subset in combinations(range(n), size):
+
+    # calculate the rates of all other partitions up to the middle one which is an edge case
+    for size in range(2, num_points//2):
+        for subset in itertools.combinations(range(num_points), size):
             subset_rates(subset)
-    
-    if n % 2 == 0: #have to be careful with middle partitions so as to not be redundant
-        for subset in combinations(range(n), n//2):
-            complement = tuple(sorted(set(range(n)) - set(subset)))
-            #only keep the subset if its first element is less than the complement's first element
+
+    if num_points % 2 == 0:  # have to be careful with middle partitions so as to not be redundant
+        for subset in itertools.combinations(range(num_points), num_points//2):
+            complement = tuple(sorted(set(range(num_points)) - set(subset)))
+            # only keep the subset if its first element is less than the complement's first element
             if subset < complement:
                 subset_rates(subset)
-    else: #n is odd
-        for subset in combinations(range(n), n//2):
+    else:  # num_points is odd
+        for subset in itertools.combinations(range(num_points), num_points//2):
             subset_rates(subset)
     return rates
 
 
 def color_from_partitions(partitions, colors, num_points, color_dist):
-    """Returns the color probability distribution for the final point given the partitions 
+    """Return the color probability distribution for the final point given the partitions
     and colors of the other points.
     
-    partitions: tuple of tuples, the single cut connectivity tuples of the points
-    colors: tuple, length (num_points-1), the colors of the points
-    num_points: int, the number of points, including the final point whose color is unknown
-    color_dist: tuple, the probabilities of each color
-
-    returns: np.array, the calculated color probabilities for the final point
-
-    >>> partitions = ((0,), (1,), (0, 1)) #the complete partition is ((0,), (1,), (2, 3)), so must be color 1
+    Parameters
+    ----------
+    partitions : tuple of tuples
+        The single cut connectivity tuples of the points
+    colors : tuple
+        Length (num_points-1), the colors of the points
+    num_points : int
+        The number of points, including the final point whose color is unknown
+    color_dist : tuple
+        The probabilities of each color
+        
+    Returns
+    -------
+    np.array
+        The calculated color probabilities for the final point
+        
+    Examples
+    --------
+    >>> partitions = ((0,), (1,), (0, 1))  # complete: ((0,), (1,), (2, 3)), color 1
     >>> colors = (1, 2, 1)
     >>> num_points = 4
     >>> color_dist = (.2,.2,.2,.2,.2)
     >>> color_from_partitions(partitions, colors, num_points, color_dist)
     array([0., 1., 0., 0., 0.])
 
-    >>> partitions = ((0,), (0,3)) #the complete partition is ((0,), (1,2), (3)), so uniform distribution
+    >>> partitions = ((0,), (0,3))  # complete: ((0,), (1,2), (3)), uniform
     >>> colors = (1, 2, 2)
     >>> num_points = 4
     >>> color_dist = (.4,.6)
@@ -462,28 +585,44 @@ def color_from_partitions(partitions, colors, num_points, color_dist):
     num_colors = len(color_dist)
     color_probs = np.zeros(num_colors)
 
-    #find which point, if any, points[-1] is connected to.
-    #points[-1] is connected to points[i] if each partition has ((num_points-1) in partition) == (i in partition)
+    # find which point, if any, points[-1] is connected to.
+    # points[-1] is connected to points[i] if each partition has
+    # ((num_points-1) in partition) == (i in partition)
     connected_point = None
     for i in range(num_points-1):
-        if all(((num_points-1) in partition) == (i in partition) for partition in partitions):
+        if all(((num_points-1) in partition) == (i in partition)
+                for partition in partitions):
             connected_point = i
             break
-    if not connected_point == None:
+    if connected_point is not None:
         color_probs[colors[connected_point]] = 1
-    else: #if points[-1] is isolated, the color is uniformly distributed
+    else:  # if points[-1] is isolated, color is uniform
         color_probs = np.array(color_dist)
     return color_probs
 
-def color_distribution(points, colors, color_dist):
-    """Returns the color probability distribution for points[-1]. Should not be called with
-    greater than 3 dimensions or more than 5 points.
-    
-    points: np.array, shape (n,d). points[:-1] are the colored points, points[-1] is the point whose color is unknown
-    colors: tuple of ints, shape (n-1). Colors of points[:-1].
-    color_dist: tuple, the probabilities of each color
 
-    returns: np.array, the calculated color distribution for the final point
+def color_distribution(points, colors, color_dist):
+    """Return the color probability distribution for points[-1].
+    
+    Should not be called with greater than 3 dimensions or more than 5 points.
+    
+    Parameters
+    ----------
+    points : np.array, shape (n,d)
+        points[:-1] are the colored points,
+        points[-1] is the point whose color is unknown
+    colors : tuple of ints, shape (n-1)
+        Colors of points[:-1]
+    color_dist : tuple
+        The probabilities of each color
+        
+    Returns
+    -------
+    np.array
+        The calculated color distribution for the final point
+        
+    Examples
+    --------
     >>> points = np.array([[0, 1], [1, 0], [0, 0]])
     >>> colors = (0, 1)
     >>> color_dist = (.5,.5)
@@ -498,43 +637,46 @@ def color_distribution(points, colors, color_dist):
     True
     """
     if len(points) > 5 or points.shape[1] > 3:
-        raise ValueError("color_distribution is not supported for more than 5 points or 3 dimensions. "
-                                "The run time is 2^(2^number of points), so it wont run for 6 points.")
-    n = len(points)
+        raise ValueError("color_distribution is not supported for more than 5 points or 3 dimensions."
+                        "The run time is 2^(2^number of points), so it wont run for 6 points.")
+    num_points = len(points)
     rates = slash_rates(points)
     partitions = list(rates.keys())
-    all_connectivity = generate_all_connectivity_tuples(n)
+    all_connectivity = generate_all_connectivity_tuples(num_points)
     allowed_partitions = allowed_tuples_colors(all_connectivity, colors, last_color_unknown=True)
-    #allowed_partitions = allowed_tuples_geometric(allowed_partitions, points)
-    #^^ the above line might be redundant, tests indicate it give the same result with minimal time difference
+
     num_p = len(partitions)
     ret = np.zeros(len(color_dist))
 
     # Precompute exp(-rates[partition]) for each partition
     exp_rates = {partition: np.exp(-rates[partition]) for partition in partitions}
 
-    #calculate the probability of each member of the superset of all partitions
-    #from there, use color_from_partitions to calculate the color distribution, then add it to the final distribution
-    power_set = itertools.chain.from_iterable(itertools.combinations(partitions, r) for r in range(num_p+1))
+    # calculate the probability of each member of the superset of all partitions
+    # from there, use color_from_partitions to calculate the color distribution,
+    # then add it to the final distribution
+    power_set = itertools.chain.from_iterable(
+        itertools.combinations(partitions, r) for r in range(num_p+1))
     probcount = 0
-    for subset in power_set: #remember, to convert a rate to a probability, do P(not happen) = e^(-rate)
-        partition = graph_cutter(n, subset)
-        if not partition in allowed_partitions:
+    for subset in power_set:  # remember, to convert a rate to a probability,
+                               # do P(not happen) = e^(-rate)
+        partition = graph_cutter(num_points, subset)
+        if partition not in allowed_partitions:
             continue
         # Memoized product calculations
         subset_prob = math.prod([1 - exp_rates[partition] for partition in subset])
-        complement_prob = math.prod([exp_rates[partition] for partition in partitions if partition not in subset])
+        complement_prob = math.prod([
+            exp_rates[partition] for partition in partitions if partition not in subset])
         subset_prob *= complement_prob
-        
-        subset_colors = color_from_partitions(subset, colors, n, color_dist)
-        ret += subset_prob * subset_colors    
+
+        subset_colors = color_from_partitions(subset, colors, num_points, color_dist)
+        ret += subset_prob * subset_colors
         probcount += subset_prob
     ret = ret / probcount  # normalize
     ret = np.clip(ret, 0, None)  # remove any tiny negatives
     ret /= np.sum(ret)  # re-normalize after clipping
     return ret
 
+
 if __name__ == "__main__":
     import doctest
     doctest.testmod()
-
