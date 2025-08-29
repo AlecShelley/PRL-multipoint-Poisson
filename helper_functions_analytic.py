@@ -12,8 +12,6 @@ from scipy.spatial import ConvexHull, QhullError # pylint: disable=no-name-in-mo
 from sklearn.decomposition import PCA
 
 
-
-####### helper functions and 2d color plots #######
 def rate(d, r):
     """Calculates the arrival rate of a rigid-motion invariant Poisson hyperplane process in d dimensions
     such that the arrival rate of hyperplanes hitting a line segment is independant of dimension.
